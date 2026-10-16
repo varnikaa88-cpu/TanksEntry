@@ -279,7 +279,6 @@ if mode == "Live ESP32 mode":
         "Live mode shows values published by the ESP32. "
         "Alerts are based on the received fields and level thresholds."
     )
-
 else:
     st.caption("Python-only simulator — no physical sensor required.")
 
@@ -291,21 +290,31 @@ else:
     st.sidebar.toggle("Simulate sensor failure", key="sensor_fault")
     st.sidebar.button("Reset simulation", on_click=reset_simulation)
 
+    # 1. TIME TICK AND STATE UPDATES (Moved to the top)
     now = time.time()
     dt = min(max(now - st.session_state.last_tick, 0.0), 2.0)
     st.session_state.last_tick = now
 
     if st.session_state.simulation_running:
+        # Auto-shutoff pump if tank is full (>= 90%)
+        if st.session_state.level >= 90.0 and st.session_state.pump_on:
+            st.session_state.pump_on = False
+            st.sidebar.warning("Pump automatically shut off: Tank Full!")
+
+        # Apply filling math
         if (st.session_state.pump_on
                 and not st.session_state.pump_fault
                 and not st.session_state.sensor_fault):
             st.session_state.level += 2.0 * dt
+            
+        # Apply leak math
         if st.session_state.leak_on:
             st.session_state.level -= 3.5 * dt
-        st.session_state.level = max(
-            0.0, min(100.0, st.session_state.level)
-        )
+            
+        # Keep within boundaries
+        st.session_state.level = max(0.0, min(100.0, st.session_state.level))
 
+    # Fetch fresh variables for UI rendering
     level = st.session_state.level
     pump_on = st.session_state.pump_on
     sensor_fault = st.session_state.sensor_fault
@@ -330,6 +339,7 @@ else:
         st.session_state.log_rows.append(row)
         st.session_state.log_rows = st.session_state.log_rows[-2000:]
 
+    # 2. DYNAMIC ALERT EVALUATION
     alerts = []
     if sensor_fault:
         displayed_level = None
@@ -346,13 +356,17 @@ else:
         else:
             status = "NORMAL"
 
-    if pump_on and pump_fault:
-        alerts.append("Pump requested ON, but simulated pump is not filling.")
-    if leak_on:
-        alerts.append("Leak / rapid-drain scenario is active.")
+    # Fixed Condition: Only warn about pump state if the level is *currently* over 90
     if pump_on and level >= 90:
         alerts.append("FULL-TANK WARNING: simulated warning only.")
+    if pump_on and pump_fault:
+        alerts.append("Pump requested ON, but simulated pump is not filling.")
+    
+    # Fixed Condition: Only warn about leak if the sidebar toggle is actively True
+    if leak_on:
+        alerts.append("Leak / rapid-drain scenario is active.")
 
+    # 3. UI RENDERING
     m1, m2, m3, m4 = st.columns(4)
     m1.metric(
         "Water level",
@@ -402,7 +416,6 @@ else:
         "Simulation only: pump, sensor, leak and fault behaviours "
         "are software-generated."
     )
-
 if mode == "Simulation mode" and st.session_state.simulation_running:
     time.sleep(1)
     st.rerun()
